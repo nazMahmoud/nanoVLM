@@ -24,7 +24,7 @@ repos:
     rev: 7.1.1  # Use the latest version from the repo
     hooks:
       - id: flake8
-        args: [ "--ignore=E203,D104,D100,W503" ] # To avoid conflicts with black
+        args: [ "--ignore=E203,D104,D100,W503,E501" ] # To avoid conflicts with black
         additional_dependencies: [ 'toml', 'flake8-docstrings', "flake8-pyproject" ]
 
   - repo: https://github.com/google/pytype
