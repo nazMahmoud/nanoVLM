@@ -69,7 +69,11 @@ def get_dataloaders(train_cfg: config.TrainConfig, vlm_cfg: config.VLMConfig) ->
     # Load and combine all training datasets
     combined_train_data = []
     for dataset_name in train_cfg.train_dataset_name:
-        train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name)
+        if dataset_name == "hp_dataset":
+            assert os.path.exists(dataset_name + ".parquet")
+            train_ds = load_dataset("parquet", data_files=f"{dataset_name}.parquet")
+        else:
+            train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name)
         combined_train_data.append(train_ds["train"])
     train_ds = concatenate_datasets(combined_train_data)
 
