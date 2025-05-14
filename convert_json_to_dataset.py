@@ -2,7 +2,7 @@ import argparse
 import json
 import os
 
-from datasets import Dataset, Features, Image, Value, load_from_disk
+from datasets import Dataset, Features, Image, Value, load_dataset
 from PIL import Image as PILImage
 
 
@@ -28,9 +28,9 @@ def convert_json_to_dataset(args):
         data = json.load(f)
 
     # Initialize lists to store data
-    image_paths = []
-    text_prompts = []
-    answers = []
+    images = []
+    user_prompts = []
+    assistant = []
 
     # Process each item in the JSON
     for item in data:
@@ -57,16 +57,27 @@ def convert_json_to_dataset(args):
         answer = item["gpt4_output"][args.output_type]
 
         # Add data to lists
-        image_paths.append(image)  # Store PIL image object directly
-        text_prompts.append("Describe the image")
-        answers.append(answer)
+        images.append(image)  # Store PIL image object directly
+        user_prompts.append("Describe the image")
+        assistant.append(answer)
+
+    # Create lists of dictionaries for the nested structure
+    texts = []
+    for u, a in zip(user_prompts, assistant):
+        texts.append({"user": u, "assistant": a})
 
     # Create the dataset
-    dataset_dict = {"image": image_paths, "text_data": text_prompts, "answer": answers}
+    dataset_dict = {"images": images, "texts": texts}
 
     # Create Features specification
     features = Features(
-        {"image": Image(), "text_data": Value("string"), "answer": Value("string")}
+        {
+            "images": Image(),
+            "texts": {
+                "user": Value(dtype="string"),
+                "assistant": Value(dtype="string"),
+            },
+        }
     )
 
     # Create the dataset
@@ -81,7 +92,7 @@ def convert_json_to_dataset(args):
 
         # Save the dataset to disk
         print(f"Saving dataset to {args.output_file}")
-        dataset.save_to_disk(args.output_file)
+        dataset.to_parquet(args.output_file + ".parquet")
     else:
         print("No output file specified, dataset not saved")
 
@@ -92,7 +103,7 @@ if __name__ == "__main__":
     """Convert json file to Hugging Face Dataset.""" ""
     # Example usage:
     # python convert_json_to_dataset.py --json_file ~/scratch/gpt4o_output_dataset_v1.json
-    # --image_base_dir ~/scratch/dataset_v1/ --output_file json_dataset
+    # --image_base_dir ../dataset_v1/ --output_file hp_dataset
     parser = argparse.ArgumentParser(
         description="Convert JSON file to Hugging Face Dataset"
     )
@@ -120,12 +131,12 @@ if __name__ == "__main__":
     assert os.path.exists(
         args.image_base_dir
     ), f"Image base directory {args.image_base_dir} does not exist"
-    if os.path.exists(args.output_file):
+    if os.path.exists(args.output_file + ".parquet"):
         # Load the dataset
-        dataset = load_from_disk(args.output_file)
+        dataset = load_dataset("parquet", data_files=args.output_file + ".parquet")
         # Now you can use the dataset
         print(f"Dataset has {len(dataset)} examples")
         print(dataset.column_names)
-        print(dataset[0])
+        print(len(dataset["train"]))
     else:
         convert_json_to_dataset(args)
