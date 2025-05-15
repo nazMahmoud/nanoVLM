@@ -34,6 +34,10 @@ def convert_json_to_dataset(args):
 
     # Process each item in the JSON
     for item in data:
+        source_type = item["source"]["type"]
+        if source_type == "illustrations":
+            # Skip illustrations
+            continue
         index = item["index"]
         base_dir = item["source"]["base_dir"]
         image_path = os.path.join(args.image_base_dir, base_dir, index)
@@ -92,7 +96,7 @@ def convert_json_to_dataset(args):
 
         # Save the dataset to disk
         print(f"Saving dataset to {args.output_file}")
-        dataset.to_parquet(args.output_file + ".parquet")
+        dataset.to_parquet(args.output_file + f"_{args.output_type}" + ".parquet")
     else:
         print("No output file specified, dataset not saved")
 
@@ -131,7 +135,7 @@ if __name__ == "__main__":
     assert os.path.exists(
         args.image_base_dir
     ), f"Image base directory {args.image_base_dir} does not exist"
-    if os.path.exists(args.output_file + ".parquet"):
+    if os.path.exists(args.output_file + f"_{args.output_type}" + ".parquet"):
         # Load the dataset
         dataset = load_dataset("parquet", data_files=args.output_file + ".parquet")
         # Now you can use the dataset
