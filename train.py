@@ -1,5 +1,10 @@
+
+import os
 import math
+
 import time
+from dataclasses import asdict
+
 import torch
 import wandb
 import numpy
@@ -18,15 +23,22 @@ torch.manual_seed(0)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(0)
 
-from data.collators import VQACollator, MMStarCollator
-from data.datasets import MMStarDataset, VQADataset
-from data.processors import get_image_processor, get_tokenizer
-from models.vision_language_model import VisionLanguageModel
 import models.config as config
 import models.utils as utils
+import wandb
+from data.collators import MMStarCollator, VQACollator
+from data.datasets import MMStarDataset, VQADataset
+from data.processors import get_image_processor, get_tokenizer
 
-#Otherwise, the tokenizer will through a warning
-import os
+os.environ["HF_HOME"] = "./local_cache/huggingface"
+os.environ["TRANSFORMERS_CACHE"] = "./local_cache/huggingface/transformers"
+os.environ["HF_DATASETS_CACHE"] = "./local_cache/huggingface/datasets"
+os.environ["HF_METRICS_CACHE"] = "./local_cache/huggingface/metrics"
+
+from datasets import concatenate_datasets, load_dataset  # noqa: E402
+
+from models.vision_language_model import VisionLanguageModel  # noqa: E402
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def init_dist():
@@ -56,9 +68,21 @@ def dist_gather(o):
 def wrap_model(model):
     return DistributedDataParallel(model, device_ids=[dist.get_rank()])
 
-def get_run_name(train_cfg):
+
+
+def get_run_name(train_cfg: config.TrainConfig) -> str:
+    """Generate a descriptive run name string based on training configuration parameters.
+
+    Args:
+        train_cfg: An object containing training configuration attributes such as
+            data_cutoff_idx, batch_size, epochs, lr_backbones, and lr_mp.
+
+    Returns:
+        str: A formatted string representing the run name with key training parameters.
+    """
     dataset_size = "full_ds" if train_cfg.data_cutoff_idx is None else f"{train_cfg.data_cutoff_idx}samples"
     batch_size = f"bs{int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}"
+
     epochs = f"ep{train_cfg.epochs}"
     learning_rate = f"lr{train_cfg.lr_backbones}-{train_cfg.lr_mp}"
     num_gpus = f"{get_world_size()}xGPU"
@@ -66,7 +90,17 @@ def get_run_name(train_cfg):
 
     return f"nanoVLM_{num_gpus}_{dataset_size}_{batch_size}_{epochs}_{learning_rate}_{date}"
 
-def get_dataloaders(train_cfg, vlm_cfg):
+
+def get_dataloaders(train_cfg: config.TrainConfig, vlm_cfg: config.VLMConfig) -> tuple:
+    """Create and return PyTorch DataLoader objects for training and testing.
+
+    Args:
+        train_cfg: Configuration object containing training dataset parameters.
+        vlm_cfg: Configuration object containing vision-language model parameters.
+
+    Returns:
+        tuple: (train_loader, test_loader) where each is a DataLoader for the respective dataset.
+    """
     # Create datasets
     image_processor = get_image_processor(vlm_cfg.vit_img_size)
     tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer)
@@ -74,10 +108,14 @@ def get_dataloaders(train_cfg, vlm_cfg):
     # Load and combine all training datasets
     combined_train_data = []
     for dataset_name in train_cfg.train_dataset_name:
-        train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name)
-        combined_train_data.append(train_ds['train'])
+        if dataset_name == "hp_dataset":
+            assert os.path.exists(dataset_name + ".parquet")
+            train_ds = load_dataset("parquet", data_files=f"{dataset_name}.parquet")
+        else:
+            train_ds = load_dataset(train_cfg.train_dataset_path, dataset_name)
+        combined_train_data.append(train_ds["train"])
     train_ds = concatenate_datasets(combined_train_data)
-    
+
     test_ds = load_dataset(train_cfg.test_dataset_path)
     train_ds = train_ds.shuffle(seed=0) # Shuffle the training dataset, so train and val get equal contributions from all concatinated datasets
 
@@ -86,6 +124,7 @@ def get_dataloaders(train_cfg, vlm_cfg):
         total_samples = len(train_ds)  # Use the entire dataset
     else:
         total_samples = min(len(train_ds), train_cfg.data_cutoff_idx)
+
 
     val_size = int(total_samples * train_cfg.val_ratio)
     train_size = total_samples - val_size
@@ -145,9 +184,9 @@ def get_dataloaders(train_cfg, vlm_cfg):
     )
 
     test_loader = DataLoader(
-        test_dataset, 
-        batch_size=train_cfg.mmstar_batch_size, 
-        shuffle=False, 
+        test_dataset,
+        batch_size=train_cfg.mmstar_batch_size,
+        shuffle=False,
         collate_fn=mmstar_collator,
         pin_memory=True,
         worker_init_fn=seed_worker,
@@ -156,28 +195,44 @@ def get_dataloaders(train_cfg, vlm_cfg):
 
     return train_loader, val_loader, test_loader
 
+
 def test_mmstar(model, tokenizer, test_loader, device):
+
+    """Evaluates the model's accuracy on a multiple-choice test dataset.
+
+    Args:
+        model: The model to evaluate.
+        tokenizer: Tokenizer for decoding model outputs and labels.
+        test_loader: DataLoader providing test batches.
+        device: Device to run computations on.
+
+    Returns:
+        float: Accuracy of the model on the test set.
+    """
     total_examples = 0
     correct_predictions = 0
     with torch.no_grad():
         for batch in test_loader:
-            image = batch['images'].to(device)
-            input_ids = batch['input_ids'].to(device)
-            labels = batch['labels'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            
+            image = batch["images"].to(device)
+            input_ids = batch["input_ids"].to(device)
+            labels = batch["labels"].to(device)
+            attention_mask = batch["attention_mask"].to(device)
+
             correct_answer = tokenizer.batch_decode(labels, skip_special_tokens=True)
-            
+
             gen = model.generate(input_ids, image, attention_mask)
             model_output = tokenizer.batch_decode(gen, skip_special_tokens=True)
-            
-            is_correct = utils.check_multiple_choice_with_regex(model_output, correct_answer)
-            
+
+            is_correct = utils.check_multiple_choice_with_regex(
+                model_output, correct_answer
+            )
+
             total_examples += len(is_correct)
             if is_correct:
                 correct_predictions += sum(is_correct)
     accuracy = correct_predictions / total_examples if total_examples > 0 else 0
     return accuracy
+
 
 # Cosine learning rate schedule with warmup (from Karpathy)
 # https://github.com/karpathy/build-nanogpt/blob/master/train_gpt2.py#L353
@@ -196,22 +251,25 @@ def get_lr(it, max_lr, max_steps):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio)) # coeff starts at 1 and goes to 0
     return min_lr + coeff * (max_lr - min_lr)
 
-def train(train_cfg, vlm_cfg):
-    train_loader, val_loader, test_loader = get_dataloaders(train_cfg, vlm_cfg)
-    tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer)
+def train(train_cfg: config.TrainConfig, vlm_cfg: config.VLMConfig):
+    """Trains a Vision-Language Model (VLM) using the provided training and model configurations.
 
+    Args:
+        train_cfg: Training configuration object containing hyperparameters and training options.
+        vlm_cfg: Vision-Language Model configuration object specifying model architecture and tokenizer.
+
+    Returns:
+        None. The function trains the model, logs metrics, saves checkpoints, and prints training statistics.
+    """
+    tokenizer = get_tokenizer(vlm_cfg.lm_tokenizer)
     total_dataset_size = len(train_loader.dataset)
     if train_cfg.log_wandb and is_master():
         run_name = get_run_name(train_cfg)
         if train_cfg.data_cutoff_idx is None:
             run_name = run_name.replace("full_ds", f"{total_dataset_size}samples")
         run = wandb.init(
-            entity=train_cfg.wandb_entity,
             project="nanoVLM",
-            config={
-                "VLMConfig": asdict(vlm_cfg),
-                "TrainConfig": asdict(train_cfg)
-            },
+            config={"VLMConfig": asdict(vlm_cfg), "TrainConfig": asdict(train_cfg)},
             name=run_name,
         )
 
@@ -229,11 +287,18 @@ def train(train_cfg, vlm_cfg):
         print(f"Validation summary{' (global)' if is_dist() else ''}: {len(val_loader.dataset)} samples, {int(len(val_loader)*get_world_size())} batches/epoch, batch size {int(train_cfg.batch_size*get_world_size()*train_cfg.gradient_accumulation_steps)}{', training on ' + str(get_world_size()) + ' GPUs' if is_dist() else ''}")
         if is_dist():
             print(f"Validation summary per GPU: {len(val_loader)} batches/epoch, batch size {val_loader.batch_size}")
+
     # Define optimizer groups
     # Since we have pretrained vision and language backbones, but a newly initialized modality projection layer, it doesn't make sense to train them with the same learning rate
     # You could opt to fully freeze the backbones and only train the MP layer, but finetuning them with a lower learning rate makes the training as a whole easier
-    param_groups = [{'params': model.MP.parameters(), 'lr': train_cfg.lr_mp},
-                    {'params': list(model.decoder.parameters()) + list(model.vision_encoder.parameters()), 'lr': train_cfg.lr_backbones}]
+    param_groups = [
+        {"params": model.MP.parameters(), "lr": train_cfg.lr_mp},
+        {
+            "params": list(model.decoder.parameters())
+            + list(model.vision_encoder.parameters()),
+            "lr": train_cfg.lr_backbones,
+        },
+    ]
     optimizer = optim.AdamW(param_groups)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -259,6 +324,7 @@ def train(train_cfg, vlm_cfg):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             attention_mask = batch["attention_mask"].to(device)
+
 
             # When using DDP with gradient accumulation,
             # skip gradient synchronization on intermediate steps to save time.
@@ -295,12 +361,19 @@ def train(train_cfg, vlm_cfg):
                 batch_loss = batch_loss * train_cfg.gradient_accumulation_steps
             total_train_loss += batch_loss
 
-            num_tokens = torch.sum(attention_mask).item() # Sum of attention mask gives number of tokens
-            num_tokens += images.shape[0] * ((images.shape[2] / vlm_cfg.vit_patch_size) ** 2) / (vlm_cfg.mp_pixel_shuffle_factor ** 2) # Add image tokens = batch_size * (((img_size / patch_size) ** 2) / (pixel_shuffle_factor ** 2))
+            num_tokens = torch.sum(
+                attention_mask
+            ).item()  # Sum of attention mask gives number of tokens
+            num_tokens += (
+                images.shape[0]
+                * ((images.shape[2] / vlm_cfg.vit_patch_size) ** 2)
+                / (vlm_cfg.mp_pixel_shuffle_factor**2)
+            )  # Add image tokens = batch_size * (((img_size / patch_size) ** 2) / (pixel_shuffle_factor ** 2))
             total_tokens_processed += num_tokens
 
             batch_end_time = time.time()
             batch_duration = batch_end_time - batch_start_time
+
             tokens_per_second = num_tokens / batch_duration 
 
             # gather loss and t/s from all ranks if DDP
@@ -360,6 +433,7 @@ def train(train_cfg, vlm_cfg):
         total_tokens_processed = sum(dist_gather(total_tokens_processed)) if is_dist() else total_tokens_processed  
         epoch_tokens_per_second = total_tokens_processed / epoch_duration
 
+
         if is_master():
             if train_cfg.log_wandb:
                 run.log({"epoch_loss": avg_train_loss,
@@ -387,8 +461,11 @@ def train(train_cfg, vlm_cfg):
             run.summary["mmstar_acc"] = accuracy
             run.finish()
 
+
 def main():
+    """Parse arguments and start the training process."""
     parser = argparse.ArgumentParser()
+
     parser.add_argument('--lr_mp', type=float, help='Learning rate for the mapping network')
     parser.add_argument('--lr_backbones', type=float, help='Learning rate for the backbones')
     parser.add_argument('--vlm_checkpoint_path', type=str, help='Path to the VLM checkpoint for loading or saving')

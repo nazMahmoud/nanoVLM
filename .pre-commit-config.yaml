@@ -1,0 +1,40 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0  # Use the latest version from the repo
+    hooks:
+      - id: trailing-whitespace
+      - id: check-xml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+
+  - repo: https://github.com/psf/black
+    rev: 25.1.0  # Use the latest version from the repo
+    hooks:
+      - id: black
+        language_version: python3.11  # Ensure compatibility with your project's Python version
+
+  - repo: https://github.com/pycqa/isort
+    rev: 6.0.0
+    hooks:
+      - id: isort
+        name: isort (python)
+
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.1.1  # Use the latest version from the repo
+    hooks:
+      - id: flake8
+        args: [ "--ignore=E203,D104,D100,W503,E501" ] # To avoid conflicts with black
+        additional_dependencies: [ 'toml', 'flake8-docstrings', "flake8-pyproject" ]
+
+  - repo: https://github.com/google/pytype
+    rev: 2024.10.11 # Use the latest version from the repo
+    hooks:
+      - id: pytype
+        name: Pytype checks
+        entry: pytype
+
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.8.1
+    hooks:
+      - id: nbstripout
