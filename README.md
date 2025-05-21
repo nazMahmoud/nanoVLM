@@ -22,12 +22,12 @@ It is therefore a simple yet powerful platform to get started with VLMs. Perfect
 
 ## Quick Start
 
-You can either clone the repository, setup an environement and start with the scripts, or directly [open in Colab](https://colab.research.google.com/github/huggingface/nanoVLM/blob/main/nanoVLM.ipynb). You can also use the [interactive notebook](./nanoVLM.ipynb) to get started!
+You can either clone the repository, setup an environment and start with the scripts, or directly [open in Colab](https://colab.research.google.com/github/huggingface/nanoVLM/blob/main/nanoVLM.ipynb). You can also use the [interactive notebook](./nanoVLM.ipynb) to get started!
 
 
 ## Environment Setup
 
-We really like `uv` and recommend using it as your package manager. But feel free to use any one that you prefer.
+We really like `uv` and recommend using it as your package manager. But feel free to use whichever you prefer.
 
 Let's first clone the repository:
 ```bash
@@ -37,7 +37,7 @@ cd nanoVLM
 
 If you want to use `uv`:
 ```bash
-uv init --bare
+uv init --bare --python 3.12
 uv sync --python 3.12
 source .venv/bin/activate
 uv add torch numpy torchvision pillow datasets huggingface-hub transformers wandb
@@ -71,18 +71,22 @@ To try a [trained model](https://huggingface.co/lusxvr/nanoVLM-222M), you can si
 ```bash
 python generate.py
 ```
+or, to use distributed data parallel with 8 gpus, you can simply run:
+```bash
+torchrun --nproc_per_node=8 train.py
+```
 
 If we feed the example image in `assets/image.png` with a question into the model, we get the following output. Even after only short training, the model can recognize the cat in the picture. 
 ```
 Input: 
 Image + 'What is this?'
-Output:
-Generation 1:  This is a cat sitting on the floor. I think this is a cat sat facing towards the left
-Generation 2:  The picture contains a white and brown cat sitting on the floor, platform, it is measuring 1
-Generation 3:  This is a cat which is sitting on the floor of the house. This cat wore a black and
-Generation 4:  This is a cute cat sitting on the surface of the mat. The background, which is blur,
-Generation 5:  This is a cat sitting on a rug, which is on the ground. The cat is in brown
-```
+
+Outputs:
+Generation 1:  This is a cat sitting on the ground. I think this is a cat sitting on the ground.
+Generation 2:  This picture is clicked outside. In the center there is a brown color cat seems to be sitting on
+Generation 3:  This is a cat sitting on the ground, which is of white and brown in color. This cat
+Generation 4:  This is a cat sitting on the ground. I think this is a cat sitting on the ground.
+Generation 5:  This is a cat sitting on the ground, which is covered with a mat. I think this is```
 
 ## Hub integration
 
@@ -196,6 +200,7 @@ We welcome contributions to nanoVLM! However, to maintain the repository's focus
 
 Here are some areas we're looking to work on in the near future. Contributions in these areas are particularly welcome:
 
+*   **Evaluations:** Implementing more evaluations or improving our MMStar implementation (highly valued)
 *   **Data Packing:** Implementing a way to create packs of a given size from the input data to optimize training.
 *   **Multi-gpu training:** Training on several GPUs
 *   **Multi-image support:** Training with several images
